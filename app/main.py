@@ -4,7 +4,7 @@ import smtplib
 import uuid
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Optional
+from typing import List, Optional
 import threading
 
 import stripe
@@ -32,6 +32,18 @@ from app.auth import authenticate_admin, create_access_token, get_current_admin
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+
+# Migrate: add missing columns to existing tables
+from sqlalchemy import text, inspect as sa_inspect
+with engine.connect() as conn:
+    inspector = sa_inspect(engine)
+    existing_cols = {c["name"] for c in inspector.get_columns("products")}
+    if "video_url" not in existing_cols:
+        conn.execute(text("ALTER TABLE products ADD COLUMN video_url VARCHAR(500) DEFAULT ''"))
+        conn.commit()
+    if "image_urls" not in existing_cols:
+        conn.execute(text("ALTER TABLE products ADD COLUMN image_urls TEXT DEFAULT ''"))
+        conn.commit()
 
 # Create upload directory
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -104,12 +116,24 @@ async def create_product(
     condition: str = Form("Used - Good"),
     is_featured: bool = Form(False),
     image: Optional[UploadFile] = File(None),
+    images: List[UploadFile] = File([]),
+    video: Optional[UploadFile] = File(None),
     admin: str = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     image_url = ""
     if image and image.filename:
         image_url = await _save_upload(image)
+
+    extra_urls = []
+    for img in images:
+        if img and img.filename:
+            url = await _save_upload(img)
+            extra_urls.append(url)
+
+    video_url = ""
+    if video and video.filename:
+        video_url = await _save_upload(video)
 
     product = Product(
         name=name,
@@ -120,6 +144,8 @@ async def create_product(
         condition=condition,
         is_featured=is_featured,
         image_url=image_url,
+        image_urls=json.dumps(extra_urls) if extra_urls else "",
+        video_url=video_url,
     )
     db.add(product)
     db.commit()
@@ -139,6 +165,9 @@ async def update_product(
     is_featured: bool = Form(False),
     is_active: bool = Form(True),
     image: Optional[UploadFile] = File(None),
+    images: List[UploadFile] = File([]),
+    video: Optional[UploadFile] = File(None),
+    remove_video: bool = Form(False),
     admin: str = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
@@ -158,6 +187,21 @@ async def update_product(
     if image and image.filename:
         product.image_url = await _save_upload(image)
 
+    extra_urls = []
+    for img in images:
+        if img and img.filename:
+            url = await _save_upload(img)
+            extra_urls.append(url)
+    if extra_urls:
+        existing = json.loads(product.image_urls) if product.image_urls else []
+        existing.extend(extra_urls)
+        product.image_urls = json.dumps(existing)
+
+    if video and video.filename:
+        product.video_url = await _save_upload(video)
+    elif remove_video:
+        product.video_url = ""
+
     db.commit()
     db.refresh(product)
     return _product_to_dict(product)
@@ -175,6 +219,23 @@ def delete_product(
     db.delete(product)
     db.commit()
     return {"detail": "Product deleted"}
+
+
+@app.delete("/api/admin/products/{product_id}/image")
+def remove_product_image(
+    product_id: int,
+    image_url: str = Query(...),
+    admin: str = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    existing = json.loads(product.image_urls) if product.image_urls else []
+    existing = [u for u in existing if u != image_url]
+    product.image_urls = json.dumps(existing) if existing else ""
+    db.commit()
+    return _product_to_dict(product)
 
 
 @app.get("/api/admin/products")
@@ -335,6 +396,8 @@ def _product_to_dict(p: Product) -> dict:
         "price": p.price,
         "category": p.category,
         "image_url": p.image_url,
+        "image_urls": json.loads(p.image_urls) if p.image_urls else [],
+        "video_url": p.video_url or "",
         "quantity": p.quantity,
         "condition": p.condition,
         "is_active": p.is_active,
