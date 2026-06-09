@@ -1,0 +1,16 @@
+import os
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/store.db")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
+SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key-in-production")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://www.floridagaragesales.com")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./data/uploads")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL", "Contact@FloridaGarageSales.com")
