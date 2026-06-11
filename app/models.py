@@ -14,6 +14,7 @@ class Product(Base):
     category = Column(String(100), default="Other")
     image_url = Column(String(500), default="")
     image_urls = Column(Text, default="")  # JSON array of additional image URLs
+    video_url = Column(String(500), default="")
     quantity = Column(Integer, default=1)
     condition = Column(String(50), default="Used - Good")
     is_active = Column(Boolean, default=True)
