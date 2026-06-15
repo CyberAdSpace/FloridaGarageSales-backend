@@ -23,6 +23,18 @@ class Product(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    name = Column(String(255), default="")
+    phone = Column(String(50), default="")
+    address = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Order(Base):
     __tablename__ = "orders"
 
