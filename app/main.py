@@ -327,6 +327,9 @@ def create_crypto_order(request_data: dict, db: Session = Depends(get_db)):
     payer = request_data.get("payer", "")
     token = request_data.get("token", "")
     amount = request_data.get("amount", 0.0)
+    customer_name = request_data.get("customer_name", payer)
+    customer_email = request_data.get("customer_email", "")
+    shipping = request_data.get("shipping_address", None)
 
     if not items or not tx_id:
         raise HTTPException(status_code=400, detail="Missing items or tx_id")
@@ -339,7 +342,9 @@ def create_crypto_order(request_data: dict, db: Session = Depends(get_db)):
         total_amount=amount,
         items_json=json.dumps(items),
         status="paid",
-        customer_name=payer,
+        customer_name=customer_name,
+        customer_email=customer_email,
+        shipping_address=json.dumps(shipping) if shipping else "",
     )
     db.add(order)
     db.commit()
