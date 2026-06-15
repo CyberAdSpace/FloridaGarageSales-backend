@@ -27,8 +27,12 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    stripe_session_id = Column(String(255), unique=True)
+    stripe_session_id = Column(String(255), default="")
     stripe_payment_intent = Column(String(255), default="")
+    payment_method = Column(String(50), default="stripe")  # stripe or crypto
+    crypto_tx_id = Column(String(255), default="")
+    crypto_payer = Column(String(255), default="")
+    crypto_token = Column(String(50), default="")
     customer_email = Column(String(255), default="")
     customer_name = Column(String(255), default="")
     total_amount = Column(Float, default=0.0)
