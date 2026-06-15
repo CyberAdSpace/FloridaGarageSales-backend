@@ -8,6 +8,7 @@ from typing import Optional
 import threading
 
 import stripe
+from jose import JWTError, jwt
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -25,9 +26,10 @@ from app.config import (
     SMTP_USER,
     SMTP_PASSWORD,
     NOTIFICATION_EMAIL,
+    SECRET_KEY,
 )
 from app.database import engine, get_db, Base
-from app.models import Product, Order
+from app.models import Product, Order, Customer
 from app.auth import authenticate_admin, create_access_token, get_current_admin
 
 # Create tables
@@ -349,7 +351,101 @@ def create_crypto_order(request_data: dict, db: Session = Depends(get_db)):
     db.add(order)
     db.commit()
     db.refresh(order)
+
+    # Send email notification for crypto order
+    threading.Thread(
+        target=send_order_notification,
+        args=(customer_name, customer_email, amount, order.id, json.dumps(items)),
+        daemon=True,
+    ).start()
+
     return {"order_id": order.id, "status": "paid", "tx_id": tx_id}
+
+
+# ============ CUSTOMER ACCOUNTS ============
+
+@app.post("/api/customer/register")
+def customer_register(request_data: dict, db: Session = Depends(get_db)):
+    email = (request_data.get("email") or "").strip().lower()
+    password = request_data.get("password", "")
+    name = request_data.get("name", "")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    existing = db.query(Customer).filter(Customer.email == email).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    from passlib.context import CryptContext
+    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+    customer = Customer(
+        email=email,
+        password_hash=pwd_ctx.hash(password),
+        name=name,
+    )
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+
+    token = create_access_token(data={"sub": email, "role": "customer", "cid": customer.id})
+    return {"access_token": token, "token_type": "bearer", "customer": {"id": customer.id, "email": customer.email, "name": customer.name}}
+
+
+@app.post("/api/customer/login")
+def customer_login(request_data: dict, db: Session = Depends(get_db)):
+    email = (request_data.get("email") or "").strip().lower()
+    password = request_data.get("password", "")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+
+    customer = db.query(Customer).filter(Customer.email == email).first()
+    if not customer:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    from passlib.context import CryptContext
+    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+    if not pwd_ctx.verify(password, customer.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(data={"sub": email, "role": "customer", "cid": customer.id})
+    return {"access_token": token, "token_type": "bearer", "customer": {"id": customer.id, "email": customer.email, "name": customer.name}}
+
+
+def get_current_customer(request: Request, db: Session = Depends(get_db)):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = auth[7:]
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        if payload.get("role") != "customer":
+            raise HTTPException(status_code=401, detail="Invalid token")
+        email = payload.get("sub", "")
+        customer = db.query(Customer).filter(Customer.email == email).first()
+        if not customer:
+            raise HTTPException(status_code=401, detail="Customer not found")
+        return customer
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+@app.get("/api/customer/me")
+def customer_profile(request: Request, db: Session = Depends(get_db)):
+    customer = get_current_customer(request, db)
+    return {"id": customer.id, "email": customer.email, "name": customer.name, "phone": customer.phone}
+
+
+@app.get("/api/customer/orders")
+def customer_orders(request: Request, db: Session = Depends(get_db)):
+    customer = get_current_customer(request, db)
+    orders = db.query(Order).filter(Order.customer_email == customer.email).order_by(Order.created_at.desc()).all()
+    return [_order_to_dict(o) for o in orders]
 
 
 # ============ CONFIG ============
