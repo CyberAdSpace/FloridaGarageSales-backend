@@ -33,6 +33,21 @@ from app.auth import authenticate_admin, create_access_token, get_current_admin
 # Create tables
 Base.metadata.create_all(bind=engine)
 
+# Migrate: add missing columns to existing tables
+from sqlalchemy import text, inspect as sa_inspect
+with engine.connect() as conn:
+    inspector = sa_inspect(engine)
+    existing_order_cols = {c["name"] for c in inspector.get_columns("orders")}
+    for col_name, col_def in [
+        ("payment_method", "VARCHAR(50) DEFAULT 'stripe'"),
+        ("crypto_tx_id", "VARCHAR(255) DEFAULT ''"),
+        ("crypto_payer", "VARCHAR(255) DEFAULT ''"),
+        ("crypto_token", "VARCHAR(50) DEFAULT ''"),
+    ]:
+        if col_name not in existing_order_cols:
+            conn.execute(text(f"ALTER TABLE orders ADD COLUMN {col_name} {col_def}"))
+            conn.commit()
+
 # Create upload directory
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs("data", exist_ok=True)
@@ -303,6 +318,35 @@ def update_order_status(
     return _order_to_dict(order)
 
 
+# ============ CRYPTO ORDERS ============
+
+@app.post("/api/crypto-order")
+def create_crypto_order(request_data: dict, db: Session = Depends(get_db)):
+    items = request_data.get("items", [])
+    tx_id = request_data.get("tx_id", "")
+    payer = request_data.get("payer", "")
+    token = request_data.get("token", "")
+    amount = request_data.get("amount", 0.0)
+
+    if not items or not tx_id:
+        raise HTTPException(status_code=400, detail="Missing items or tx_id")
+
+    order = Order(
+        payment_method="crypto",
+        crypto_tx_id=tx_id,
+        crypto_payer=payer,
+        crypto_token=token,
+        total_amount=amount,
+        items_json=json.dumps(items),
+        status="paid",
+        customer_name=payer,
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    return {"order_id": order.id, "status": "paid", "tx_id": tx_id}
+
+
 # ============ CONFIG ============
 
 @app.get("/api/config")
@@ -346,7 +390,11 @@ def _product_to_dict(p: Product) -> dict:
 def _order_to_dict(o: Order) -> dict:
     return {
         "id": o.id,
-        "stripe_session_id": o.stripe_session_id,
+        "stripe_session_id": o.stripe_session_id or "",
+        "payment_method": o.payment_method or "stripe",
+        "crypto_tx_id": o.crypto_tx_id or "",
+        "crypto_payer": o.crypto_payer or "",
+        "crypto_token": o.crypto_token or "",
         "customer_email": o.customer_email,
         "customer_name": o.customer_name,
         "total_amount": o.total_amount,
